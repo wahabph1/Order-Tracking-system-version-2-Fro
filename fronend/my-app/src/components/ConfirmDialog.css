@@ -1,0 +1,46 @@
+/* Centered overlay */
+.cd-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.55);
+  backdrop-filter: blur(2px);
+  display: grid;
+  place-items: center;
+  z-index: 9999;
+  animation: cdFadeIn .12s ease-out;
+}
+
+/* Dialog */
+.cd-dialog {
+  width: min(92vw, 420px);
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 22px 60px rgba(2, 6, 23, 0.25);
+  padding: 18px 16px 14px;
+  animation: cdSlideUp .18s ease-out;
+}
+
+.cd-icon { font-size: 22px; }
+.cd-title { margin: 6px 0 4px; font-size: 18px; font-weight: 800; }
+.cd-desc { margin: 0 0 12px; color: #334155; font-size: 14px; }
+
+/* Actions */
+.cd-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.cd-btn {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #0f172a;
+  cursor: pointer;
+}
+.cd-btn:hover { filter: brightness(0.98); }
+.cd-primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+.cd-danger { background: linear-gradient(135deg, #ef4444, #dc2626); border-color: #dc2626; color: #fff; }
+
+/* Motions */
+@keyframes cdFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cdSlideUp { from { transform: translateY(12px) scale(.98); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
