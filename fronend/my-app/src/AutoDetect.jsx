@@ -138,7 +138,7 @@ export default function AutoDetect() {
       const raw = (d?.text || '').replace(/\uFFFD/g, '');
       if (raw) setText(raw);
       const serial = pickSerial(raw);
-      const dateMatch = raw.match(/(\d{4}[-\/.]\d{1,2}[-\/.]\d{1,2})|(\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4})/);
+      const dateMatch = raw.match(/(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})|(\d{1,2}[/.]\d{1,2}[/.]\d{2,4})/);
       const ownerFound = owners.find(o => new RegExp(o, 'i').test(raw)) || '';
       setForm(prev => ({
         ...prev,
@@ -192,7 +192,7 @@ export default function AutoDetect() {
         for (const d of results) {
           const raw = (d?.text || '').replace(/\uFFFD/g, '');
           const serial = pickSerial(raw);
-          const dateMatch = raw.match(/(\d{4}[-\/.]\d{1,2}[-\/.]\d{1,2})|(\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4})/);
+          const dateMatch = raw.match(/(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})|(\d{1,2}[/.]\d{1,2}[/.]\d{2,4})/);
           const ownerFound = owners.find(o => new RegExp(o, 'i').test(raw)) || '';
           const score = (serial ? serial.replace(/[^A-Z0-9]/gi,'').length * 10 : 0) + (d?.confidence || 0) + (ownerFound ? 5 : 0);
           if (score > best.score) best = { score, text: raw, serial, date: dateMatch ? dateMatch[0] : '', owner: ownerFound };
