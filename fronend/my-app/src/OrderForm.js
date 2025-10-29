@@ -6,7 +6,7 @@ import axios from 'axios';
 // Prefer local API only on localhost; otherwise use production URL
 const API_URL = (process.env.REACT_APP_API_BASE_URL && typeof window !== 'undefined' && window.location.hostname === 'localhost')
   ? process.env.REACT_APP_API_BASE_URL
-  : 'https://order-b.vercel.app/api/orders';
+  : 'https://order-tracking-system-version-2-bac.vercel.app/api/orders';
 const ownerOptions = ['Emirate Essentials', 'Ahsan', 'Habibi Tools'];
 
 function OrderForm({ onOrderAdded }) {

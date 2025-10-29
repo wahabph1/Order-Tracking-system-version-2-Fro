@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 
 // ✅ Correct deployed backend URL
-const API_URL = 'https://order-b.vercel.app/api/orders';
+const API_URL = 'https://order-tracking-system-version-2-bac.vercel.app/api/orders';
 
 function EditOrderModal({ order, onClose, onOrderUpdated }) {
     const statusOptions = ['Pending', 'In Transit', 'Delivered', 'Cancelled'];

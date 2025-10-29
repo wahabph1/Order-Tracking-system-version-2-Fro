@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API_URL = 'https://order-b.vercel.app/api/orders';
+const API_URL = 'https://order-tracking-system-version-2-bac.vercel.app/api/orders';
 
 // Reusable animated SVG Donut Chart
 function DonutChart({ segments, size = 240, strokeWidth = 36 }) {

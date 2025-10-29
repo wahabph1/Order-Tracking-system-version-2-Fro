@@ -14,7 +14,7 @@ import ActionSplash from './components/ActionSplash';
 
 const API_URL = (process.env.REACT_APP_API_BASE_URL && typeof window !== 'undefined' && window.location.hostname === 'localhost')
   ? process.env.REACT_APP_API_BASE_URL
-  : 'https://order-b.vercel.app/api/orders';
+  : 'https://order-tracking-system-version-2-bac.vercel.app/api/orders';
 // Removed 'All' option and excluded Wahab from main dashboard
 const ownerOptions = ['All (Exc. Wahab)', 'Emirate Essentials', 'Ahsan', 'Habibi Tools']; 
 const statusOptions = ['Pending', 'In Transit', 'Delivered', 'Cancelled'];
