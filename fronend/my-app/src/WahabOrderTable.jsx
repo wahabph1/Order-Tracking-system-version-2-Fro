@@ -50,7 +50,7 @@ function WahabOrderTable() {
     const [pwdOpen, setPwdOpen] = useState(false);
     const [pwd, setPwd] = useState('');
     const [pwdError, setPwdError] = useState('');
-    const [pwdAction, setPwdAction] = useState(null); // 'edit'|'delete'|'deleteAll'|'deleteSelected'|'deleteDelivered'|'deleteCancelled'
+    const [pwdAction, setPwdAction] = useState(null); // 'edit'|'delete'|'deleteAll'|'deleteSelected'|'deleteDelivered'|'deleteCancelled'|'deleteWeek'
     const [pwdPayload, setPwdPayload] = useState(null);
     const openPwd = (action, payload = null) => { setPwdOpen(true); setPwd(''); setPwdError(''); setPwdAction(action); setPwdPayload(payload); };
     const submitPwd = () => {
@@ -61,6 +61,7 @@ function WahabOrderTable() {
       else if (pwdAction === 'deleteSelected') handleDeleteSelected();
       else if (pwdAction === 'deleteDelivered') handleDeleteDelivered();
       else if (pwdAction === 'deleteCancelled') handleDeleteCancelled();
+      else if (pwdAction === 'deleteWeek' && pwdPayload) deleteWeekOrders(pwdPayload);
       setPwdOpen(false); setPwdAction(null); setPwdPayload(null);
     };
 
@@ -72,6 +73,16 @@ function WahabOrderTable() {
     const [weeklyStart, setWeeklyStart] = useState('');
     const [weeklyEnd, setWeeklyEnd] = useState('');
     const [exportingWeekly, setExportingWeekly] = useState(false);
+
+    // Bulk status UI state
+    const [bulkOpen, setBulkOpen] = useState(false);
+    const [bulkText, setBulkText] = useState('');
+    const [bulkStatus, setBulkStatus] = useState('Pending');
+    const [bulkLoading, setBulkLoading] = useState(false);
+    const [bulkResult, setBulkResult] = useState(null);
+
+    // Weekly Manager (Friday-start weeks)
+    const [weeklyMgrOpen, setWeeklyMgrOpen] = useState(false);
 
     // Fetch only Wahab orders
     const fetchWahabOrders = useCallback(async (opts = {}) => {
@@ -217,6 +228,71 @@ function WahabOrderTable() {
 
     const statusClass = (s) => `status status--${String(s || '').toLowerCase().replace(/\\s+/g,'-')}`;
 
+    // PDF status colors (match dashboard feel)
+    const statusColor = (s) => {
+      const key = String(s || '').toLowerCase();
+      if (key === 'delivered') return { bg: [209, 250, 229], fg: [16, 185, 129] }; // green
+      if (key === 'cancelled') return { bg: [254, 226, 226], fg: [239, 68, 68] }; // red
+      if (key === 'in transit') return { bg: [219, 234, 254], fg: [59, 130, 246] }; // blue
+      if (key === 'pending') return { bg: [254, 243, 199], fg: [245, 158, 11] }; // amber
+      return { bg: [243, 244, 246], fg: [31, 41, 55] }; // neutral
+    };
+
+    // Friday-start week helpers
+    const toStartOfDay = (d) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+    const weekStartFriday = (d) => {
+      const x = toStartOfDay(d);
+      const day = x.getDay(); // 0=Sun ... 5=Fri
+      const back = ( (day - 5 + 7) % 7 );
+      x.setDate(x.getDate() - back);
+      return x;
+    };
+    const weekEndFromStart = (ws) => { const x = new Date(ws); x.setDate(x.getDate() + 6); x.setHours(23,59,59,999); return x; };
+
+    const groupWeeksFriday = (list) => {
+      const groups = new Map();
+      for (const o of (list || [])) {
+        const od = new Date(o.orderDate || o.createdAt);
+        const ws = weekStartFriday(od);
+        const key = ws.toISOString().slice(0,10);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(o);
+      }
+      // Build sorted array newest first
+      const keys = Array.from(groups.keys()).sort().reverse();
+      return keys.map(k => {
+        const ws = new Date(k);
+        const we = weekEndFromStart(ws);
+        const items = groups.get(k).sort((a,b)=> new Date(a.orderDate||a.createdAt) - new Date(b.orderDate||b.createdAt));
+        return { key: k, start: ws, end: we, orders: items };
+      });
+    };
+
+    // Parse serials helper
+    const parseSerials = (txt) => Array.from(new Set(String(txt || '')
+      .split(/[\n,\t\r\s]+/)
+      .map(s => s.trim())
+      .filter(Boolean)));
+
+    const applyBulkStatus = async () => {
+      const serials = parseSerials(bulkText);
+      if (!serials.length) { alert('Enter at least one serial'); return; }
+      setBulkLoading(true); setBulkResult(null);
+      try {
+        const res = await axios.put(`${API_URL}/bulk-status`, { serialNumbers: serials, newStatus: bulkStatus, owner: 'Wahab' });
+        setBulkResult(res?.data);
+        // Update local state for visible rows
+        setOrders(prev => prev.map(o => (String(o.owner) === 'Wahab' && serials.includes(String(o.serialNumber))
+          ? { ...o, deliveryStatus: bulkStatus }
+          : o)));
+        logActivity({ type: 'status', title: 'Bulk status update (Wahab)', detail: `${serials.length} serials → ${bulkStatus}` });
+      } catch (e) {
+        alert(e?.response?.data?.message || 'Bulk status update failed');
+      } finally {
+        setBulkLoading(false);
+      }
+    };
+
     const safeSavePDF = (doc, filename) => {
         try { doc.save(filename); }
         catch (e) {
@@ -260,6 +336,17 @@ function WahabOrderTable() {
                 3: { cellWidth: 140 },
                 4: { cellWidth: 'auto' },
             },
+            didParseCell: (data) => {
+                if (data.section === 'body') {
+                    const status = data.row?.raw?.[4];
+                    const { bg, fg } = statusColor(status);
+                    if (data.column.index === 4) {
+                        data.cell.styles.fillColor = bg;
+                        data.cell.styles.textColor = fg;
+                        data.cell.styles.fontStyle = 'bold';
+                    }
+                }
+            },
             didDrawPage: () => {
                 const pageSize = doc.internal.pageSize;
                 const pageHeight = pageSize.getHeight();
@@ -298,6 +385,17 @@ function WahabOrderTable() {
                 2: { cellWidth: 90 },
                 3: { cellWidth: 140 },
                 4: { cellWidth: 'auto' },
+            },
+            didParseCell: (data) => {
+                if (data.section === 'body') {
+                    const status = data.row?.raw?.[4];
+                    const { bg, fg } = statusColor(status);
+                    if (data.column.index === 4) {
+                        data.cell.styles.fillColor = bg;
+                        data.cell.styles.textColor = fg;
+                        data.cell.styles.fontStyle = 'bold';
+                    }
+                }
             },
             didDrawPage: () => {
                 const pageSize = doc.internal.pageSize;
@@ -372,6 +470,17 @@ function WahabOrderTable() {
                     3: { cellWidth: 140 },
                     4: { cellWidth: 'auto' },
                 },
+                didParseCell: (data) => {
+                    if (data.section === 'body') {
+                        const status = data.row?.raw?.[4];
+                        const { bg, fg } = statusColor(status);
+                        if (data.column.index === 4) {
+                            data.cell.styles.fillColor = bg;
+                            data.cell.styles.textColor = fg;
+                            data.cell.styles.fontStyle = 'bold';
+                        }
+                    }
+                },
                 didDrawPage: () => {
                     const pageSize = doc.internal.pageSize;
                     const pageHeight = pageSize.getHeight();
@@ -385,6 +494,95 @@ function WahabOrderTable() {
             // eslint-disable-next-line no-await-in-loop
             await new Promise(r => setTimeout(r, 60));
         }
+    };
+
+    const generateWeekPdf = (week) => {
+      const list = week?.orders || [];
+      if (!list.length) { alert('No orders in this week'); return; }
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'A4' });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(14);
+      const fmt = (d) => new Date(d).toLocaleDateString();
+      doc.text(`Wahab Orders — ${fmt(week.start)} to ${fmt(week.end)} (Fri start)`, 40, 40);
+      doc.setFontSize(10);
+      doc.text(`Generated: ${new Date().toLocaleString()}  •  Total: ${list.length}`, 40, 58);
+      const body = list.map((o, i) => [
+        String(i + 1), o.serialNumber || '-', new Date(o.orderDate || o.createdAt).toLocaleDateString(), o.owner || '-', o.deliveryStatus || '-',
+      ]);
+      autoTable(doc, {
+        startY: 76,
+        head: [['#', 'Serial', 'Date', 'Owner', 'Status']],
+        body,
+        styles: { fontSize: 9, cellPadding: 6 },
+        headStyles: { fillColor: [37, 99, 235] },
+        columnStyles: { 0: { cellWidth: 30 }, 1: { cellWidth: 140 }, 2: { cellWidth: 90 }, 3: { cellWidth: 140 }, 4: { cellWidth: 'auto' } },
+        didParseCell: (data) => {
+          if (data.section === 'body') {
+            const status = data.row?.raw?.[4];
+            const { bg, fg } = statusColor(status);
+            if (data.column.index === 4) {
+              data.cell.styles.fillColor = bg;
+              data.cell.styles.textColor = fg;
+              data.cell.styles.fontStyle = 'bold';
+            }
+          }
+        },
+        didDrawPage: () => {
+          const pageSize = doc.internal.pageSize;
+          const pageHeight = pageSize.getHeight();
+          doc.setFontSize(9);
+          doc.text(`Page ${doc.internal.getNumberOfPages()}`, pageSize.getWidth() - 80, pageHeight - 16);
+        }
+      });
+      const fname = `wahab-orders-${week.start.toISOString().slice(0,10)}_to_${week.end.toISOString().slice(0,10)}-fri.pdf`;
+      safeSavePDF(doc, fname);
+    };
+
+    const deleteWeekOrders = async (week) => {
+      const ids = (week?.orders || []).map(o => o._id);
+      if (!ids.length) return;
+      try {
+        await Promise.all(ids.map(id => axios.delete(`${API_URL}/${id}`)));
+        setOrders(prev => prev.filter(o => !ids.includes(o._id)));
+        logActivity({ type:'delete', title:'Wahab week deleted', detail:`${ids.length} orders` });
+      } catch (err) { alert('Failed to delete some orders for this week.'); }
+    };
+
+    const downloadOrderPdf = (order) => {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'A4' });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(14);
+      doc.text(`Wahab Order — ${order.serialNumber || order._id}`, 40, 40);
+      doc.setFontSize(10);
+      doc.text(`Date: ${new Date(order.orderDate || order.createdAt).toLocaleDateString()}`, 40, 58);
+      const row = [
+        '1',
+        order.serialNumber || '-',
+        new Date(order.orderDate || order.createdAt).toLocaleDateString(),
+        order.owner || '-',
+        order.deliveryStatus || '-',
+      ];
+      autoTable(doc, {
+        startY: 76,
+        head: [['#', 'Serial', 'Date', 'Owner', 'Status']],
+        body: [row],
+        styles: { fontSize: 9, cellPadding: 6 },
+        headStyles: { fillColor: [37, 99, 235] },
+        columnStyles: { 0: { cellWidth: 30 }, 1: { cellWidth: 140 }, 2: { cellWidth: 90 }, 3: { cellWidth: 140 }, 4: { cellWidth: 'auto' } },
+        didParseCell: (data) => {
+          if (data.section === 'body') {
+            const status = data.row?.raw?.[4];
+            const { bg, fg } = statusColor(status);
+            if (data.column.index === 4) {
+              data.cell.styles.fillColor = bg;
+              data.cell.styles.textColor = fg;
+              data.cell.styles.fontStyle = 'bold';
+            }
+          }
+        },
+      });
+      const safe = String(order.serialNumber || order._id).replace(/[^a-z0-9-_]+/ig, '_');
+      safeSavePDF(doc, `wahab-order-${safe}.pdf`);
     };
 
     // Animated popup will cover UI when loading; no inline text
@@ -595,6 +793,7 @@ function WahabOrderTable() {
                             )}
                           </td>
                           <td data-label="Actions" className="actions-cell">
+                            <button className="btn" onClick={()=>downloadOrderPdf(order)}>PDF</button>
                             <button className="btn btn-edit" onClick={()=>openPwd('edit', order)}>Edit</button>
                             <button className="btn btn-delete" onClick={()=>openPwd('delete', order)}>Delete</button>
                           </td>
@@ -728,6 +927,10 @@ function WahabOrderTable() {
                   <span>Export Cancelled</span>
                   <span className="arrow">→</span>
                 </button>
+                <button className="modal-action" onClick={()=>{ setActionsOpen(false); setBulkOpen(true); }}>
+                  <span>Bulk Status Update</span>
+                  <span className="arrow">→</span>
+                </button>
                 <button className="modal-action delete-selected" disabled={selectedIds.size === 0} onClick={()=>{ setActionsOpen(false); openPwd('deleteSelected'); }}>
                   <span>🗑️ Delete Selected ({selectedIds.size})</span>
                   <span className="arrow">→</span>
@@ -738,6 +941,10 @@ function WahabOrderTable() {
                 </button>
                 <button className="modal-action export-weekly" onClick={()=>{ setActionsOpen(false); setWeeklyOpen(true); }}>
                   <span>Export Week-wise (Date Range)</span>
+                  <span className="arrow">→</span>
+                </button>
+                <button className="modal-action" onClick={()=>{ setActionsOpen(false); setWeeklyMgrOpen(true); }}>
+                  <span>Weekly Manager (Friday start)</span>
                   <span className="arrow">→</span>
                 </button>
                 <button className="modal-action delete-cancelled" disabled={cancelledCount === 0} onClick={()=>{ setActionsOpen(false); openPwd('deleteCancelled'); }}>
@@ -774,6 +981,39 @@ function WahabOrderTable() {
               </div>
             </Modal>
 
+            {/* Bulk Status Modal */}
+            <Modal open={bulkOpen} title="Bulk Status Update (Wahab)" onClose={()=>setBulkOpen(false)} size="md">
+              <div style={{ display:'grid', gap:12 }}>
+                <div>
+                  <label style={{ display:'block', fontSize:12, color:'#64748b', marginBottom:4 }}>Paste Serial Numbers</label>
+                  <textarea
+                    rows={8}
+                    value={bulkText}
+                    onChange={(e)=>setBulkText(e.target.value)}
+                    placeholder={`One per line, or comma/space-separated\nExample:\nABC123\nXYZ-999\nP-00034`}
+                    style={{ width:'100%', padding:'10px 12px', border:'2px solid #e5e7eb', borderRadius:8 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display:'block', fontSize:12, color:'#64748b', marginBottom:4 }}>New Status</label>
+                  <select value={bulkStatus} onChange={(e)=>setBulkStatus(e.target.value)} style={{ padding:'10px 12px', border:'2px solid #e5e7eb', borderRadius:8 }}>
+                    {statusOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                {bulkResult && (
+                  <div style={{ fontSize:12, color:'#334155', background:'#f8fafc', border:'1px solid #e2e8f0', padding:8, borderRadius:8 }}>
+                    Updated {bulkResult.modifiedCount || 0} orders. Matched serials: {bulkResult.matchedCount || 0}. Not found: {bulkResult.notFound?.length || 0}
+                  </div>
+                )}
+                <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
+                  <button className="btn" onClick={()=>setBulkOpen(false)} style={{ background:'#e5e7eb', border:'1px solid #d1d5db' }}>Close</button>
+                  <button className="btn" disabled={bulkLoading} onClick={applyBulkStatus} style={{ background:'#2563eb', color:'#fff', border:'1px solid #1e40af' }}>
+                    {bulkLoading ? 'Updating…' : 'Apply' }
+                  </button>
+                </div>
+              </div>
+            </Modal>
+
             {/* Password Modal */}
             <Modal open={pwdOpen} title="Enter Password" onClose={()=>setPwdOpen(false)} size="md">
               <div style={{ display:'grid', gap: 10 }}>
@@ -782,6 +1022,29 @@ function WahabOrderTable() {
                 <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
                   <button className="btn" onClick={()=>setPwdOpen(false)} style={{ background:'#e5e7eb', border:'1px solid #d1d5db' }}>Cancel</button>
                   <button className="btn" onClick={submitPwd} style={{ background:'#2563eb', color:'#fff', border:'1px solid #1e40af' }}>Continue</button>
+                </div>
+              </div>
+            </Modal>
+
+            {/* Weekly Manager (Friday-start) */}
+            <Modal open={weeklyMgrOpen} title="Weekly Manager (Friday start)" onClose={()=>setWeeklyMgrOpen(false)} size="md">
+              <div style={{ display:'grid', gap:12 }}>
+                <div style={{ fontSize:12, color:'#475569' }}>Groups based on Friday→Thursday weeks. Manage PDFs and deletions.</div>
+                <div style={{ maxHeight:'60vh', overflow:'auto', border:'1px solid #e5e7eb', borderRadius:8 }}>
+                  {(groupWeeksFriday(orders) || []).map(week => (
+                    <div key={week.key} style={{ display:'grid', gridTemplateColumns:'1fr auto auto', gap:8, alignItems:'center', padding:10, borderBottom:'1px solid #e5e7eb' }}>
+                      <div>
+                        <div style={{ fontWeight:600 }}>{new Date(week.start).toLocaleDateString()} → {new Date(week.end).toLocaleDateString()}</div>
+                        <div style={{ fontSize:12, color:'#64748b' }}>Orders: {week.orders.length}</div>
+                      </div>
+                      <button className="btn" onClick={()=>generateWeekPdf(week)} style={{ background:'#2563eb', color:'#fff', border:'1px solid #1e40af' }}>Download PDF</button>
+                      <button className="btn" onClick={()=>openPwd('deleteWeek', week)} style={{ background:'#ef4444', color:'#fff', border:'1px solid #dc2626' }}>Delete Week</button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display:'flex', justifyContent:'space-between', gap:8 }}>
+                  <button className="btn" onClick={()=>setWeeklyMgrOpen(false)} style={{ background:'#e5e7eb', border:'1px solid #d1d5db' }}>Close</button>
+                  <button className="btn" onClick={()=>{ const weeks = groupWeeksFriday(orders); for (const w of weeks) generateWeekPdf(w); }} style={{ background:'#111827', color:'#fff', border:'1px solid #0f172a' }}>Download All PDFs</button>
                 </div>
               </div>
             </Modal>
