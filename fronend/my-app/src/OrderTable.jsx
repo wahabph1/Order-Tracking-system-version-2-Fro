@@ -18,6 +18,7 @@ const API_URL = (process.env.REACT_APP_API_BASE_URL && typeof window !== 'undefi
 // Removed 'All' option and excluded Wahab from main dashboard
 const ownerOptions = ['All (Exc. Wahab)', 'Emirate Essentials', 'Ahsan', 'Habibi Tools']; 
 const statusOptions = ['Pending', 'In Transit', 'Delivered', 'Cancelled'];
+const OWNER_LIST = ['Emirate Essentials', 'Ahsan', 'Habibi Tools', 'Wahab'];
 const DEBOUNCE_DELAY = 300;
 
 function OrderTable() {
@@ -65,6 +66,9 @@ function OrderTable() {
     // Actions menu
     const [actionsOpen, setActionsOpen] = useState(false);
     const [actionsSplash, setActionsSplash] = useState(false);
+    const [exportOwner, setExportOwner] = useState(OWNER_LIST[0]);
+    const [exportFrom, setExportFrom] = useState(''); // YYYY-MM-DD
+    const [exportTo, setExportTo] = useState(''); // YYYY-MM-DD
 
     const fetchOrders = useCallback(async (opts = {}) => {
         const { silent = false } = opts;
@@ -294,13 +298,11 @@ function OrderTable() {
         }
     };
 
-    const exportByStatus = (status) => {
-        const list = (orders || []).filter(o => String(o.deliveryStatus).toLowerCase() === String(status).toLowerCase());
-        if (!list.length) { alert(`No ${status} orders to export.`); return; }
+    const buildPdf = (list, title) => {
         const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'A4' });
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(14);
-        doc.text(`Orders Report — ${status}`, 40, 40);
+        doc.text(title, 40, 40);
         doc.setFontSize(10);
         doc.text(`Generated: ${new Date().toLocaleString()}  •  Total: ${list.length}`, 40, 58);
         const body = list.map((o, i) => [
@@ -316,13 +318,7 @@ function OrderTable() {
             body,
             styles: { fontSize: 9, cellPadding: 6 },
             headStyles: { fillColor: [37, 99, 235] },
-            columnStyles: {
-                0: { cellWidth: 30 },
-                1: { cellWidth: 140 },
-                2: { cellWidth: 90 },
-                3: { cellWidth: 140 },
-                4: { cellWidth: 'auto' },
-            },
+            columnStyles: { 0: { cellWidth: 30 }, 1: { cellWidth: 140 }, 2: { cellWidth: 90 }, 3: { cellWidth: 140 }, 4: { cellWidth: 'auto' } },
             didDrawPage: () => {
                 const pageSize = doc.internal.pageSize;
                 const pageHeight = pageSize.getHeight();
@@ -330,6 +326,13 @@ function OrderTable() {
                 doc.text(`Page ${doc.internal.getNumberOfPages()}`, pageSize.getWidth() - 80, pageHeight - 16);
             }
         });
+        return doc;
+    };
+
+    const exportByStatus = (status) => {
+        const list = (orders || []).filter(o => String(o.deliveryStatus).toLowerCase() === String(status).toLowerCase());
+        if (!list.length) { alert(`No ${status} orders to export.`); return; }
+        const doc = buildPdf(list, `Orders Report — ${status}`);
         const fname = `orders-${status.toLowerCase().replace(/\s+/g,'-')}.pdf`;
         safeSavePDF(doc, fname);
     };
@@ -337,40 +340,60 @@ function OrderTable() {
     const exportAllOrders = () => {
         const list = orders || [];
         if (!list.length) { alert('No orders to export.'); return; }
-        const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'A4' });
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(14);
-        doc.text('Orders Report — All', 40, 40);
-        doc.setFontSize(10);
-        doc.text(`Generated: ${new Date().toLocaleString()}  •  Total: ${list.length}`, 40, 58);
-        const body = list.map((o, i) => [
-            String(i + 1),
-            o.serialNumber || '-',
-            new Date(o.orderDate || o.createdAt).toLocaleDateString(),
-            o.owner || '-',
-            o.deliveryStatus || '-',
-        ]);
-        autoTable(doc, {
-            startY: 76,
-            head: [['#', 'Serial', 'Date', 'Owner', 'Status']],
-            body,
-            styles: { fontSize: 9, cellPadding: 6 },
-            headStyles: { fillColor: [37, 99, 235] },
-            columnStyles: {
-                0: { cellWidth: 30 },
-                1: { cellWidth: 140 },
-                2: { cellWidth: 90 },
-                3: { cellWidth: 140 },
-                4: { cellWidth: 'auto' },
-            },
-            didDrawPage: () => {
-                const pageSize = doc.internal.pageSize;
-                const pageHeight = pageSize.getHeight();
-                doc.setFontSize(9);
-                doc.text(`Page ${doc.internal.getNumberOfPages()}`, pageSize.getWidth() - 80, pageHeight - 16);
-            }
-        });
+        const doc = buildPdf(list, 'Orders Report — All');
         safeSavePDF(doc, 'orders-all.pdf');
+    };
+
+    const fetchOwnerOrders = async (owner) => {
+        const res = await axios.get(`${API_URL}?owner=${encodeURIComponent(owner)}`);
+        return Array.isArray(res.data) ? res.data : [];
+    };
+
+    const exportPendingForOwner = async (owner) => {
+        try {
+            const data = await fetchOwnerOrders(owner);
+            const list = data.filter(o => String(o.deliveryStatus).toLowerCase() === 'pending');
+            if (!list.length) { alert(`No Pending orders for ${owner}.`); return; }
+            const doc = buildPdf(list, `Orders Report — Pending (${owner})`);
+            const fname = `orders-pending-${owner.toLowerCase().replace(/[^a-z0-9]+/g,'-')}.pdf`;
+            safeSavePDF(doc, fname);
+        } catch (e) {
+            alert(`Failed to export for ${owner}.`);
+            console.error(e);
+        }
+    };
+
+    const exportPendingForOwnerInRange = async (owner, from, to) => {
+        try {
+            if (!from || !to) { alert('Please select From and To dates'); return; }
+            const fromDt = new Date(`${from}T00:00:00`);
+            const toDt = new Date(`${to}T23:59:59.999`);
+            if (isNaN(fromDt.getTime()) || isNaN(toDt.getTime())) { alert('Invalid dates'); return; }
+            if (fromDt > toDt) { alert('From date cannot be after To date'); return; }
+
+            const data = await fetchOwnerOrders(owner);
+            const list = data.filter(o => {
+                if (String(o.deliveryStatus).toLowerCase() !== 'pending') return false;
+                const d = new Date(o.orderDate || o.createdAt);
+                if (isNaN(d.getTime())) return false;
+                return d >= fromDt && d <= toDt;
+            });
+            if (!list.length) { alert(`No Pending orders for ${owner} in selected range.`); return; }
+            const title = `Orders Report — Pending (${owner}) — ${from} to ${to}`;
+            const doc = buildPdf(list, title);
+            const fname = `orders-pending-${owner.toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${from}-to-${to}.pdf`;
+            safeSavePDF(doc, fname);
+        } catch (e) {
+            alert(`Failed to export range for ${owner}.`);
+            console.error(e);
+        }
+    };
+
+    const exportPendingByOwnerAll = async () => {
+        for (const owner of OWNER_LIST) {
+            // eslint-disable-next-line no-await-in-loop
+            await exportPendingForOwner(owner);
+        }
     };
 
     // Show animated popup instead of inline loading text
@@ -523,7 +546,7 @@ function OrderTable() {
                               </span>
                             )}
                           </td>
-<td data-label="Actions" className="actions-cell">
+                          <td data-label="Actions" className="actions-cell">
                             <button className="btn btn-edit" onClick={()=>openPwd('edit', order)}>Edit</button>
                             <button className="btn btn-delete" onClick={()=>openPwd('delete', order)}>Delete</button>
                           </td>
@@ -613,13 +636,30 @@ function OrderTable() {
 
             {/* Actions Modal */}
             <Modal open={actionsOpen} title="Actions" onClose={()=>setActionsOpen(false)} size="md">
+              <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:12, flexWrap:'wrap' }}>
+                <strong>Owner:</strong>
+                <select className="search" value={exportOwner} onChange={(e)=>setExportOwner(e.target.value)}>
+                  {OWNER_LIST.map(o => (<option key={o} value={o}>{o}</option>))}
+                </select>
+                <button className="btn" onClick={()=>{ setActionsOpen(false); exportPendingForOwner(exportOwner); }}>
+                  Export Pending (Owner)
+                </button>
+                <span style={{ marginLeft:12 }} />
+                <label style={{ fontWeight:600 }}>From</label>
+                <input type="date" className="search" value={exportFrom} onChange={e=>setExportFrom(e.target.value)} />
+                <label style={{ fontWeight:600 }}>To</label>
+                <input type="date" className="search" value={exportTo} onChange={e=>setExportTo(e.target.value)} />
+                <button className="btn" onClick={()=>{ setActionsOpen(false); exportPendingForOwnerInRange(exportOwner, exportFrom, exportTo); }} disabled={!exportFrom || !exportTo}>
+                  Export Pending (Owner + Range)
+                </button>
+              </div>
               <div className="actions-grid">
                 <button className="modal-action export-all" onClick={()=>{ setActionsOpen(false); exportAllOrders(); }}>
                   <span>Export All</span>
                   <span className="arrow">→</span>
                 </button>
                 <button className="modal-action export-pending" onClick={()=>{ setActionsOpen(false); exportByStatus('Pending'); }}>
-                  <span>Export Pending</span>
+                  <span>Export Pending (Current Filter)</span>
                   <span className="arrow">→</span>
                 </button>
                 <button className="modal-action export-delivered" onClick={()=>{ setActionsOpen(false); exportByStatus('Delivered'); }}>
@@ -628,6 +668,10 @@ function OrderTable() {
                 </button>
                 <button className="modal-action export-cancelled" onClick={()=>{ setActionsOpen(false); exportByStatus('Cancelled'); }}>
                   <span>Export Cancelled</span>
+                  <span className="arrow">→</span>
+                </button>
+                <button className="modal-action export-pending-owners" onClick={()=>{ setActionsOpen(false); exportPendingByOwnerAll(); }}>
+                  <span>Export Pending — By Owner (All)</span>
                   <span className="arrow">→</span>
                 </button>
                 <button className="modal-action delete-selected" disabled={selectedIds.size === 0} onClick={()=>{ setActionsOpen(false); openPwd('deleteSelected'); }}>
