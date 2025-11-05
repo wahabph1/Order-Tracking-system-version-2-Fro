@@ -547,8 +547,56 @@ function OrderTable() {
                             )}
                           </td>
                           <td data-label="Actions" className="actions-cell">
-                            <button className="btn btn-edit" onClick={()=>openPwd('edit', order)}>Edit</button>
-                            <button className="btn btn-delete" onClick={()=>openPwd('delete', order)}>Delete</button>
+                            <button 
+                              className="btn btn-edit" 
+                              onClick={()=>openPwd('edit', order)}
+                              style={{
+                                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                color: 'white',
+                                border: 'none',
+                                padding: '8px 16px',
+                                borderRadius: '6px',
+                                fontWeight: '500',
+                                cursor: 'pointer',
+                                transition: 'all 0.3s ease',
+                                boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.target.style.transform = 'translateY(-2px)';
+                                e.target.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.4)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.target.style.transform = 'translateY(0)';
+                                e.target.style.boxShadow = '0 2px 8px rgba(16, 185, 129, 0.3)';
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button 
+                              className="btn btn-delete" 
+                              onClick={()=>openPwd('delete', order)}
+                              style={{
+                                background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                                color: 'white',
+                                border: 'none',
+                                padding: '8px 16px',
+                                borderRadius: '6px',
+                                fontWeight: '500',
+                                cursor: 'pointer',
+                                transition: 'all 0.3s ease',
+                                boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.target.style.transform = 'translateY(-2px)';
+                                e.target.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.4)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.target.style.transform = 'translateY(0)';
+                                e.target.style.boxShadow = '0 2px 8px rgba(239, 68, 68, 0.3)';
+                              }}
+                            >
+                              Delete
+                            </button>
                           </td>
                         </tr>
                       ))}
