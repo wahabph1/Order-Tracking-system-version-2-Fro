@@ -13,6 +13,7 @@ import ProfitCalculator from '../src/ProfitCalculator'; // Profit Calculator
 import Dashboard from './Dashboard';
 import LoadingPopup from './components/LoadingPopup';
 import AutoDetect from '../src/AutoDetect';
+import QatarDetails from './QatarDetails';
 
 function App() {
     // Splash screen state
@@ -111,6 +112,8 @@ function App() {
                     <ProfitCalculator />
                 ) : currentView === 'autoDetect' ? (
                     <AutoDetect />
+                ) : currentView === 'qatarDetails' ? (
+                    <QatarDetails />
                 ) : (
                     <OrderForm onOrderAdded={() => {}} />
                 )}
