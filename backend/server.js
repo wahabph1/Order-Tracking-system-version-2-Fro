@@ -70,6 +70,10 @@ app.use('/api/orders', orderRoutes);
 const profitRoutes = require('./routes/profitRoutes');
 app.use('/api/profit', profitRoutes);
 
+// Investment Routes (Qatar investments, etc.)
+const investmentRoutes = require('./routes/investmentRoutes');
+app.use('/api/investments', investmentRoutes);
+
 // CRITICAL: Express app ko export karna zaroori hai
 module.exports = app;
 
