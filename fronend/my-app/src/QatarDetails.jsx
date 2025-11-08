@@ -21,6 +21,8 @@ export default function QatarDetails() {
   const [editingId, setEditingId] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteId, setDeleteId] = useState(null);
+  const [rateLoading, setRateLoading] = useState(false);
+  const [rateInfo, setRateInfo] = useState('');
 
   const fetchRecent = async () => {
     try {
@@ -43,6 +45,32 @@ export default function QatarDetails() {
   useEffect(() => {
     try { localStorage.setItem('aedToPkrRate', String(rate || '')); } catch {}
   }, [rate]);
+
+  const fetchLiveRate = async () => {
+    setRateInfo('');
+    setRateLoading(true);
+    try {
+      // Try exchangerate.host (no key)
+      let v;
+      try {
+        const res = await axios.get('https://api.exchangerate.host/latest?base=AED&symbols=PKR');
+        v = res?.data?.rates?.PKR;
+      } catch {}
+      // Fallback: open.er-api.com
+      if (!v) {
+        const res2 = await axios.get('https://open.er-api.com/v6/latest/AED');
+        v = res2?.data?.rates?.PKR;
+      }
+      if (!v || !Number.isFinite(Number(v))) throw new Error('No rate received');
+      const val = Number(v);
+      setRate(String(val.toFixed(2)));
+      setRateInfo('Live rate updated');
+    } catch (e) {
+      setRateInfo('Failed to fetch live rate');
+    } finally {
+      setRateLoading(false);
+    }
+  };
 
   const resetForm = () => {
     setAmount('');
@@ -129,6 +157,10 @@ export default function QatarDetails() {
             style={{ width: 90, padding: '6px 8px', borderRadius: 8, border: '1px solid #e5e7eb' }}
           />
           <span style={{ fontSize: 13 }}>PKR</span>
+          <button type="button" onClick={fetchLiveRate} disabled={rateLoading} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#f8fafc', cursor: 'pointer' }}>
+            {rateLoading ? 'Fetching…' : 'Fetch live rate'}
+          </button>
+          {rateInfo && <span style={{ fontSize: 12, color: '#059669' }}>{rateInfo}</span>}
         </div>
       </div>
 
