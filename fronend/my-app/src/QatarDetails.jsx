@@ -188,7 +188,8 @@ export default function QatarDetails() {
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button type="button" onClick={() => {
-                      // Prefill form for editn                      setEditingId(r._id);
+                      // Prefill form for edit
+                      setEditingId(r._id);
                       const defaultCurrency = r?.realPrice ? 'AED' : 'PKR';
                       setCurrency(defaultCurrency);
                       setAmount(String(defaultCurrency === 'AED' ? (r.realPrice || 0) : (r.totalProfit || 0)));
