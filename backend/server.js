@@ -9,7 +9,9 @@ const app = express();
 // ***************************************************************
 // 🔑 CRITICAL FIX: DATABASE CONNECTION KO SIRF EK BAAR CALL KIYA GAYA HAI
 // Yeh Vercel par server ko crash hone se bachayega aur 500 error theek karega.
-connectDB(); 
+connectDB()
+  .then(() => console.log('DB ready'))
+  .catch(err => console.error('DB connect error:', (err && err.message) || err));
 // Ensure indexes reflect schema (allow duplicates for Wahab only)
 const Order = require('./db/models/OrderModel');
 Order.syncIndexes().catch(err => console.error('Order index sync failed:', (err && err.message) || err));
