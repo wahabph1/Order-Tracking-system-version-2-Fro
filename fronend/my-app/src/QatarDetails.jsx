@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import Modal from './components/Modal';
+import ConfirmDialog from './components/ConfirmDialog';
 
 // Use existing profit endpoints to persist investment-like records under a dedicated store
 const PROFIT_API = 'https://order-tracking-system-version-2-bac.vercel.app/api/profit';
@@ -15,6 +16,11 @@ export default function QatarDetails() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [recent, setRecent] = useState([]);
+  const [rate, setRate] = useState('75'); // 1 AED = X PKR
+  const [currency, setCurrency] = useState('AED');
+  const [editingId, setEditingId] = useState(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleteId, setDeleteId] = useState(null);
 
   const fetchRecent = async () => {
     try {
@@ -27,6 +33,17 @@ export default function QatarDetails() {
 
   useEffect(() => { fetchRecent(); }, []);
 
+  // Load/save conversion rate
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('aedToPkrRate');
+      if (saved) setRate(saved);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('aedToPkrRate', String(rate || '')); } catch {}
+  }, [rate]);
+
   const resetForm = () => {
     setAmount('');
     setNote('');
@@ -38,32 +55,44 @@ export default function QatarDetails() {
     e.preventDefault();
     setError('');
     const amt = Number(amount);
+    const r = Number(rate);
     if (!Number.isFinite(amt) || amt < 0) {
       setError('Please enter a valid non-negative amount');
+      return;
+    }
+    if (!Number.isFinite(r) || r <= 0) {
+      setError('Please enter a valid AED→PKR rate');
       return;
     }
     try {
       setSaving(true);
       // Ensure store exists (ignore error if already exists)
-      try {
-        await axios.post(`${PROFIT_API}/stores`, { id: STORE_ID, name: STORE_NAME });
-      } catch {}
+      try { await axios.post(`${PROFIT_API}/stores`, { id: STORE_ID, name: STORE_NAME }); } catch {}
 
-      // Save an investment-like calculation record
+      const AED = currency === 'AED' ? amt : +(amt / r).toFixed(2);
+      const PKR = currency === 'PKR' ? amt : +(amt * r).toFixed(2);
+
+      // If editing: delete old, then create new with same timestamp (if provided)
+      if (editingId) {
+        try { await axios.delete(`${PROFIT_API}/calculations/${editingId}`); } catch {}
+      }
+
       await axios.post(`${PROFIT_API}/calculations`, {
         storeId: STORE_ID,
         storeName: STORE_NAME,
         itemName: note ? `Investment — ${note}` : 'Investment',
-        realPrice: amt,
+        // Store AED in realPrice; PKR in profit fields
+        realPrice: AED,
         deliveryCharges: 0,
         deliveredOrders: 1,
-        profitPerOrder: amt,
-        totalProfit: amt,
-        // Map date if provided
+        profitPerOrder: PKR,
+        totalProfit: PKR,
         timestamp: date || undefined,
       });
+
       setSaving(false);
       setOpen(false);
+      setEditingId(null);
       resetForm();
       fetchRecent();
     } catch (e) {
@@ -79,15 +108,28 @@ export default function QatarDetails() {
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16 }}>
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => { setEditingId(null); setCurrency('AED'); setOpen(true); }}
           style={{
             background: 'linear-gradient(135deg, #2563eb, #0ea5e9)',
             color: '#fff', border: 'none', padding: '10px 16px',
             borderRadius: 10, cursor: 'pointer', boxShadow: '0 8px 22px rgba(37,99,235,.35)'
           }}
-        >
+> 
           + Investment Record
         </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#334155' }}>
+          <span style={{ fontSize: 13 }}>1 AED =</span>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={rate}
+            onChange={(e) => setRate(e.target.value)}
+            title="AED to PKR rate"
+            style={{ width: 90, padding: '6px 8px', borderRadius: 8, border: '1px solid #e5e7eb' }}
+          />
+          <span style={{ fontSize: 13 }}>PKR</span>
+        </div>
       </div>
 
       {recent.length > 0 && (
@@ -97,32 +139,78 @@ export default function QatarDetails() {
         }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>Recent Investments</div>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {recent.map((r) => (
-              <li key={r._id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px dashed #eee' }}>
-                <span>{new Date(r.timestamp || r.createdAt).toLocaleString()}</span>
-                <span style={{ fontWeight: 600 }}>{(r.totalProfit || 0).toLocaleString()} PKR</span>
-              </li>
-            ))}
+            {recent.map((r) => {
+              const conv = Number(rate) > 0 ? Number(rate) : 1;
+              const aed = r?.realPrice ? Number(r.realPrice) : ((Number(r.totalProfit) || 0) / conv);
+              const pkr = r?.totalProfit ? Number(r.totalProfit) : ((Number(r.realPrice) || 0) * conv);
+              const item = String(r.itemName || 'Investment');
+              const noteText = item.startsWith('Investment — ') ? item.slice('Investment — '.length) : '';
+              return (
+                <li key={r._id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center', padding: '8px 0', borderBottom: '1px dashed #eee' }}>
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    <div style={{ color: '#475569', fontSize: 12 }}>{new Date(r.timestamp || r.createdAt).toLocaleString()}</div>
+                    {noteText && <div style={{ color: '#334155', fontSize: 13 }}>{noteText}</div>}
+                    <div style={{ color: '#0f172a', fontWeight: 600 }}>
+                      AED {aed.toLocaleString(undefined, { maximumFractionDigits: 2 })} | PKR {pkr.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" onClick={() => {
+                      // Prefill form for editn                      setEditingId(r._id);
+                      const defaultCurrency = r?.realPrice ? 'AED' : 'PKR';
+                      setCurrency(defaultCurrency);
+                      setAmount(String(defaultCurrency === 'AED' ? (r.realPrice || 0) : (r.totalProfit || 0)));
+                      setNote(noteText);
+                      try { setDate((r.timestamp || r.createdAt) ? new Date(r.timestamp || r.createdAt).toISOString().slice(0,16) : ''); } catch { setDate(''); }
+                      setOpen(true);
+                    }} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#f8fafc', cursor: 'pointer' }}>Edit</button>
+                    <button type="button" onClick={() => { setDeleteId(r._id); setConfirmOpen(true); }} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #fee2e2', background: '#fef2f2', color: '#b91c1c', cursor: 'pointer' }}>Delete</button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
 
-      <Modal open={open} onClose={() => { setOpen(false); resetForm(); }} title="Add Investment" size="sm">
+      <Modal open={open} onClose={() => { setOpen(false); setEditingId(null); resetForm(); }} title={editingId ? 'Edit Investment' : 'Add Investment'} size="sm">
         <form onSubmit={onSubmit}>
           <div style={{ display: 'grid', gap: 12 }}>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontWeight: 600 }}>Amount</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="Enter amount"
-                style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #e5e7eb' }}
-                required
-              />
-            </label>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <label style={{ flex: 1, display: 'grid', gap: 6 }}>
+                  <span style={{ fontWeight: 600 }}>Amount</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    placeholder="Enter amount"
+                    style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #e5e7eb' }}
+                    required
+                  />
+                </label>
+                <label style={{ width: 120, display: 'grid', gap: 6 }}>
+                  <span style={{ fontWeight: 600 }}>Currency</span>
+                  <select value={currency} onChange={(e) => setCurrency(e.target.value)} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #e5e7eb' }}>
+                    <option value="AED">AED</option>
+                    <option value="PKR">PKR</option>
+                  </select>
+                </label>
+              </div>
+              {/* Live conversion hint */}
+              <div style={{ color: '#475569', fontSize: 12 }}>
+                {(() => {
+                  const amt = Number(amount);
+                  const r = Number(rate);
+                  if (!Number.isFinite(amt) || !Number.isFinite(r) || r <= 0) return null;
+                  const AED = currency === 'AED' ? amt : +(amt / r).toFixed(2);
+                  const PKR = currency === 'PKR' ? amt : +(amt * r).toFixed(2);
+                  return `Will save as: AED ${AED.toLocaleString(undefined,{maximumFractionDigits:2})} | PKR ${PKR.toLocaleString(undefined,{maximumFractionDigits:2})}`;
+                })()}
+              </div>
+            </div>
 
             <label style={{ display: 'grid', gap: 6 }}>
               <span style={{ fontWeight: 600 }}>Note (optional)</span>
@@ -161,6 +249,19 @@ export default function QatarDetails() {
           </div>
         </form>
       </Modal>
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Delete this record?"
+        description="This action cannot be undone."
+        confirmText="Delete"
+        onConfirm={async () => {
+          try { if (deleteId) await axios.delete(`${PROFIT_API}/calculations/${deleteId}`); } catch {}
+          setConfirmOpen(false);
+          setDeleteId(null);
+          fetchRecent();
+        }}
+        onCancel={() => { setConfirmOpen(false); setDeleteId(null); }}
+      />
     </div>
   );
 }
