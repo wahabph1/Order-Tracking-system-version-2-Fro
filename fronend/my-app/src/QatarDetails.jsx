@@ -2,7 +2,10 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import Modal from './components/Modal';
 
-const API_URL = 'https://order-tracking-system-version-2-bac.vercel.app/api/investments';
+// Use existing profit endpoints to persist investment-like records under a dedicated store
+const PROFIT_API = 'https://order-tracking-system-version-2-bac.vercel.app/api/profit';
+const STORE_ID = 'qatar';
+const STORE_NAME = 'Qatar';
 
 export default function QatarDetails() {
   const [open, setOpen] = useState(false);
@@ -15,7 +18,7 @@ export default function QatarDetails() {
 
   const fetchRecent = async () => {
     try {
-      const res = await axios.get(`${API_URL}?source=Qatar&limit=5`);
+      const res = await axios.get(`${PROFIT_API}/calculations/${STORE_ID}?limit=5`);
       setRecent(Array.isArray(res.data) ? res.data : []);
     } catch (e) {
       setRecent([]);
@@ -41,11 +44,23 @@ export default function QatarDetails() {
     }
     try {
       setSaving(true);
-      await axios.post(API_URL, {
-        amount: amt,
-        note: note || undefined,
-        date: date || undefined,
-        source: 'Qatar'
+      // Ensure store exists (ignore error if already exists)
+      try {
+        await axios.post(`${PROFIT_API}/stores`, { id: STORE_ID, name: STORE_NAME });
+      } catch {}
+
+      // Save an investment-like calculation record
+      await axios.post(`${PROFIT_API}/calculations`, {
+        storeId: STORE_ID,
+        storeName: STORE_NAME,
+        itemName: note ? `Investment — ${note}` : 'Investment',
+        realPrice: amt,
+        deliveryCharges: 0,
+        deliveredOrders: 1,
+        profitPerOrder: amt,
+        totalProfit: amt,
+        // Map date if provided
+        timestamp: date || undefined,
       });
       setSaving(false);
       setOpen(false);
@@ -84,8 +99,8 @@ export default function QatarDetails() {
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {recent.map((r) => (
               <li key={r._id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px dashed #eee' }}>
-                <span>{new Date(r.date || r.createdAt).toLocaleString()}</span>
-                <span style={{ fontWeight: 600 }}>{(r.amount || 0).toLocaleString()} {r.currency || 'PKR'}</span>
+                <span>{new Date(r.timestamp || r.createdAt).toLocaleString()}</span>
+                <span style={{ fontWeight: 600 }}>{(r.totalProfit || 0).toLocaleString()} PKR</span>
               </li>
             ))}
           </ul>
