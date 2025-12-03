@@ -1,9 +1,13 @@
 // WahabReports.jsx - Exclusive reports for Wahab orders
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
-const API_URL = 'https://order-tracking-system-version-2-bac.vercel.app/api/orders';
+const API_URL = (process.env.REACT_APP_API_BASE_URL && typeof window !== 'undefined' && window.location.hostname === 'localhost')
+  ? process.env.REACT_APP_API_BASE_URL
+  : 'https://order-tracking-system-version-2-bac.vercel.app/api/orders';
 
 // Reusable animated SVG Donut Chart
 function DonutChart({ segments, size = 240, strokeWidth = 36 }) {
@@ -79,22 +83,11 @@ function StatCard({ label, value, color }) {
 
 function WahabReports({ onClose }) {
     const [counts, setCounts] = useState({ pending: 0, inTransit: 0, delivered: 0, cancelled: 0, total: 0 });
+    const [settlements, setSettlements] = useState([]); // computed payment buckets by markers
+    const [markers, setMarkers] = useState([]);
 
-    useEffect(() => {
-        const fetchWahabOrders = async () => {
-            try {
-                // Fetch only Wahab orders
-                const res = await axios.get(`${API_URL}?owner=Wahab`);
-                const data = Array.isArray(res.data) ? res.data : [];
-                computeCounts(data);
-            } catch (e) {
-                setCounts({ pending: 0, inTransit: 0, delivered: 0, cancelled: 0, total: 0 });
-            }
-        };
-        fetchWahabOrders();
-    }, []);
 
-    const computeCounts = (list) => {
+    const computeCounts = useCallback((list) => {
         const c = { pending: 0, inTransit: 0, delivered: 0, cancelled: 0 };
         (list || []).forEach(o => {
             const s = (o.deliveryStatus || '').toLowerCase();
@@ -105,7 +98,65 @@ function WahabReports({ onClose }) {
         });
         const total = c.pending + c.inTransit + c.delivered + c.cancelled;
         setCounts({ ...c, total });
-    };
+    }, []);
+
+    // Compute settlement buckets by backend markers
+    const computeSettlements = useCallback((list, mlist) => {
+        const orders = (list || []).slice().sort((a,b)=> new Date(b.createdAt || b.orderDate) - new Date(a.createdAt || a.orderDate));
+        const idx = new Map();
+        orders.forEach((o, i) => idx.set(o._id, i));
+        const markerList = (mlist || [])
+            .filter(m => m && m.afterOrderId && idx.has(m.afterOrderId))
+            .map(m => ({ ...m, rowIndex: idx.get(m.afterOrderId) }))
+            .sort((a,b)=> a.rowIndex - b.rowIndex); // top→down
+        const buckets = [];
+        for (let i = 0; i < markerList.length; i++) {
+            const m = markerList[i];
+            const start = m.rowIndex + 1; // rows strictly below marker
+            const end = (i + 1 < markerList.length) ? (markerList[i+1].rowIndex + 1) : orders.length;
+            const slice = orders.slice(start, end);
+            const stats = { total: slice.length, delivered: 0, pending: 0, cancelled: 0, inTransit: 0 };
+            for (const o of slice) {
+                const s = String(o.deliveryStatus || '').toLowerCase();
+                if (s === 'delivered') stats.delivered++;
+                else if (s === 'pending') stats.pending++;
+                else if (s === 'cancelled') stats.cancelled++;
+                else if (s === 'in transit') stats.inTransit++;
+            }
+            const rate = 500; // PKR per delivered
+            const earnings = stats.delivered * rate;
+            buckets.push({
+                id: m._id || m.id,
+                label: `After ${orders[m.rowIndex]?.serialNumber || 'row'}`,
+                time: m.createdAt,
+                stats,
+                earnings,
+                orders: slice,
+            });
+        }
+        setSettlements(buckets);
+    }, []);
+
+    // Now that callbacks exist, run initial fetch
+    useEffect(() => {
+        const fetchWahabOrders = async () => {
+            try {
+                // Fetch only Wahab orders
+                const res = await axios.get(`${API_URL}?owner=Wahab`);
+                const data = Array.isArray(res.data) ? res.data : [];
+                const mres = await axios.get(`${API_URL}/settlements?owner=Wahab`);
+                const mlist = Array.isArray(mres.data) ? mres.data : [];
+                setMarkers(mlist);
+                computeCounts(data);
+                computeSettlements(data, mlist);
+            } catch (e) {
+                setCounts({ pending: 0, inTransit: 0, delivered: 0, cancelled: 0, total: 0 });
+                setSettlements([]);
+                setMarkers([]);
+            }
+        };
+        fetchWahabOrders();
+    }, [computeCounts, computeSettlements]);
 
     const colors = {
         pending: '#f59e0b',     // amber
@@ -120,6 +171,74 @@ function WahabReports({ onClose }) {
         { label: 'Delivered', value: counts.delivered, color: colors.delivered },
         { label: 'Cancelled', value: counts.cancelled, color: colors.cancelled },
     ];
+
+    // PDF helpers
+    const statusColor = (s) => {
+        const k = String(s || '').toLowerCase();
+        if (k === 'delivered') return { bg: [209, 250, 229], fg: [16, 185, 129] }; // green
+        if (k === 'cancelled') return { bg: [254, 226, 226], fg: [239, 68, 68] }; // red
+        if (k === 'in transit') return { bg: [219, 234, 254], fg: [59, 130, 246] }; // blue
+        if (k === 'pending') return { bg: [254, 243, 199], fg: [245, 158, 11] }; // amber
+        return { bg: [243, 244, 246], fg: [31, 41, 55] };
+    };
+
+    const downloadSettlementPdf = (bucket, index) => {
+        const list = bucket?.orders || [];
+        const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'A4' });
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(14);
+        doc.text(`Wahab Settlement — Marker #${index + 1} (${bucket.label})`, 40, 40);
+        doc.setFontSize(10);
+        doc.text(`Generated: ${new Date().toLocaleString()}  •  Orders: ${list.length}  •  Delivered: ${bucket.stats?.delivered || 0}`, 40, 58);
+        const body = list.map((o, i) => [
+            String(i + 1),
+            o.serialNumber || '-',
+            new Date(o.orderDate || o.createdAt).toLocaleDateString(),
+            o.deliveryStatus || '-',
+        ]);
+        autoTable(doc, {
+            startY: 76,
+            head: [['#', 'Serial', 'Date', 'Status']],
+            body,
+            styles: { fontSize: 9, cellPadding: 6 },
+            headStyles: { fillColor: [109, 40, 217] },
+            columnStyles: {
+                0: { cellWidth: 30 },
+                1: { cellWidth: 180 },
+                2: { cellWidth: 100 },
+                3: { cellWidth: 'auto' },
+            },
+            didParseCell: (data) => {
+                if (data.section === 'body') {
+                    const status = data.row?.raw?.[3];
+                    const { bg, fg } = statusColor(status);
+                    if (data.column.index === 3) {
+                        data.cell.styles.fillColor = bg;
+                        data.cell.styles.textColor = fg;
+                        data.cell.styles.fontStyle = 'bold';
+                    }
+                }
+            },
+            didDrawPage: () => {
+                const pageSize = doc.internal.pageSize;
+                const pageHeight = pageSize.getHeight();
+                doc.setFontSize(9);
+                doc.text(`Page ${doc.internal.getNumberOfPages()}`, pageSize.getWidth() - 80, pageHeight - 16);
+            }
+        });
+        const safe = String(bucket?.label || `marker_${index + 1}`).replace(/[^a-z0-9-_]+/ig, '_');
+        try { doc.save(`wahab-settlement-${safe}.pdf`); }
+        catch (e) {
+            try {
+                const blob = doc.output('blob');
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `wahab-settlement-${safe}.pdf`; a.style.display = 'none';
+                document.body.appendChild(a); a.click();
+                setTimeout(() => { URL.revokeObjectURL(url); document.body.removeChild(a); }, 0);
+            } catch {}
+        }
+    };
 
     return (
         <div className="reports-container">
@@ -277,6 +396,52 @@ function WahabReports({ onClose }) {
                     </div>
                 </div>
             </div>
+
+            {/* Settlement Payments (by your markers) */}
+            {settlements.length > 0 && (
+                <div style={{ marginTop: 20 }}>
+                    <h3 style={{ margin: '12px 0 8px 0', color: '#0f172a' }}>Settlement Payments (by your markers)</h3>
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                        gap: 12,
+                    }}>
+                        {settlements.map((s, i) => (
+                            <div key={s.id} className="report-card" style={{ borderTopColor: '#6d28d9', background: 'linear-gradient(135deg, #faf5ff 0%, #ede9fe 100%)' }}>
+                                <div className="report-card-label" style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                                    <span>Marker #{i+1} • {s.label}</span>
+                                    <span style={{ fontSize: 11, color:'#6b7280' }}>{new Date(s.time).toLocaleString()}</span>
+                                </div>
+                                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop: 6 }}>
+                                    <div>
+                                        <div style={{ fontSize:12, color:'#374151' }}>Delivered</div>
+                                        <div style={{ fontSize:18, fontWeight:700, color:'#16a34a' }}>{s.stats.delivered}</div>
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize:12, color:'#374151' }}>Total</div>
+                                        <div style={{ fontSize:18, fontWeight:700 }}>{s.stats.total}</div>
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize:12, color:'#374151' }}>PKR</div>
+                                        <div style={{ fontSize:18, fontWeight:700, color:'#f59e0b' }}>{s.earnings.toLocaleString()}</div>
+                                    </div>
+                                </div>
+                                <div style={{ display:'flex', gap:8, marginTop:8, fontSize:12 }}>
+                                    <span style={{ background:'#dcfce7', color:'#166534', padding:'2px 6px', borderRadius:6 }}>D {s.stats.delivered}</span>
+                                    <span style={{ background:'#fee2e2', color:'#991b1b', padding:'2px 6px', borderRadius:6 }}>C {s.stats.cancelled}</span>
+                                    <span style={{ background:'#fde68a', color:'#92400e', padding:'2px 6px', borderRadius:6 }}>P {s.stats.pending}</span>
+                                    <span style={{ background:'#bfdbfe', color:'#1e3a8a', padding:'2px 6px', borderRadius:6 }}>T {s.stats.inTransit}</span>
+                                </div>
+                                <div style={{ display:'flex', justifyContent:'flex-end', marginTop:10 }}>
+                                    <button className="btn" style={{ background:'#6d28d9', color:'#fff', border:'1px solid #5b21b6' }} onClick={() => downloadSettlementPdf(s, i)}>
+                                        Download PDF
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="bars-wrap">
                 {segments.map(s => (

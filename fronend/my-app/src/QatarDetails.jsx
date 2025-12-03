@@ -169,8 +169,17 @@ export default function QatarDetails() {
           marginTop: 10, border: '1px solid #e5e7eb', borderRadius: 12, padding: 12,
           background: '#fff'
         }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>Recent Investments</div>
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+          <div style={{ fontWeight: 700, marginBottom: 12 }}>Recent Investments</div>
+          {/* Clean table layout */}
+          <div style={{ display: 'grid', gridTemplateColumns: '210px 1fr 140px 140px 180px', gap: 8, alignItems: 'center' }}>
+            {/* Header */}
+            <div style={{ fontSize: 12, color: '#64748b', fontWeight: 700 }}>Date & Time</div>
+            <div style={{ fontSize: 12, color: '#64748b', fontWeight: 700 }}>Note</div>
+            <div style={{ fontSize: 12, color: '#64748b', fontWeight: 700, textAlign: 'right' }}>AED</div>
+            <div style={{ fontSize: 12, color: '#64748b', fontWeight: 700, textAlign: 'right' }}>PKR</div>
+            <div style={{ fontSize: 12, color: '#64748b', fontWeight: 700, textAlign: 'right' }}>Actions</div>
+            <div style={{ gridColumn: '1 / -1', height: 1, background: '#e2e8f0', margin: '6px 0 2px' }} />
+            {/* Rows */}
             {recent.map((r) => {
               const conv = Number(rate) > 0 ? Number(rate) : 1;
               const aed = r?.realPrice ? Number(r.realPrice) : ((Number(r.totalProfit) || 0) / conv);
@@ -178,15 +187,16 @@ export default function QatarDetails() {
               const item = String(r.itemName || 'Investment');
               const noteText = item.startsWith('Investment — ') ? item.slice('Investment — '.length) : '';
               return (
-                <li key={r._id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center', padding: '8px 0', borderBottom: '1px dashed #eee' }}>
-                  <div style={{ display: 'grid', gap: 4 }}>
-                    <div style={{ color: '#475569', fontSize: 12 }}>{new Date(r.timestamp || r.createdAt).toLocaleString()}</div>
-                    {noteText && <div style={{ color: '#334155', fontSize: 13 }}>{noteText}</div>}
-                    <div style={{ color: '#0f172a', fontWeight: 600 }}>
-                      AED {aed.toLocaleString(undefined, { maximumFractionDigits: 2 })} | PKR {pkr.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                    </div>
+                <React.Fragment key={r._id}>
+                  <div style={{ color: '#0f172a' }}>{new Date(r.timestamp || r.createdAt).toLocaleString()}</div>
+                  <div style={{ color: '#334155', fontSize: 13 }}>{noteText || '—'}</div>
+                  <div style={{ color: '#0f172a', fontWeight: 600, textAlign: 'right' }}>
+                    {aed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ color: '#0f172a', fontWeight: 600, textAlign: 'right' }}>
+                    {pkr.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                     <button type="button" onClick={() => {
                       // Prefill form for edit
                       setEditingId(r._id);
@@ -199,10 +209,11 @@ export default function QatarDetails() {
                     }} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#f8fafc', cursor: 'pointer' }}>Edit</button>
                     <button type="button" onClick={() => { setDeleteId(r._id); setConfirmOpen(true); }} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #fee2e2', background: '#fef2f2', color: '#b91c1c', cursor: 'pointer' }}>Delete</button>
                   </div>
-                </li>
+                  <div style={{ gridColumn: '1 / -1', height: 1, background: '#f1f5f9' }} />
+                </React.Fragment>
               );
             })}
-          </ul>
+          </div>
         </div>
       )}
 

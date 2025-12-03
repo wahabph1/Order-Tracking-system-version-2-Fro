@@ -1,6 +1,6 @@
 // WahabOrderTable.jsx - Exclusive dashboard for Wahab orders
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import WahabOrderForm from './WahabOrderForm'; 
 import EditOrderModal from './EditOrderModal';
@@ -83,6 +83,50 @@ function WahabOrderTable() {
 
     // Weekly Manager (Friday-start weeks)
     const [weeklyMgrOpen, setWeeklyMgrOpen] = useState(false);
+
+    // Backend-persisted Settlement Markers
+    const [markers, setMarkers] = useState([]); // [{ _id, owner, afterOrderId, label, createdAt }]
+    const fetchMarkers = useCallback(async () => {
+      try {
+        const res = await axios.get(`${API_URL}/settlements?owner=Wahab`);
+        setMarkers(Array.isArray(res.data) ? res.data : []);
+      } catch (e) { /* ignore */ }
+    }, []);
+    useEffect(() => { fetchMarkers(); }, [fetchMarkers]);
+
+    const addMarkerAfterOrder = async (order) => {
+      if (!order || !order._id) return;
+      try {
+        const res = await axios.post(`${API_URL}/settlements`, { owner: 'Wahab', afterOrderId: order._id, label: 'Settlement' });
+        const doc = res?.data;
+        if (doc && doc._id) setMarkers(prev => [doc, ...prev]); else fetchMarkers();
+      } catch (e) { alert('Failed to add marker'); }
+    };
+    const deleteMarker = async (id) => {
+      try { await axios.delete(`${API_URL}/settlements/${id}`); setMarkers(prev => prev.filter(m => m._id !== id)); }
+      catch (e) { alert('Failed to delete marker'); }
+    };
+
+    // Combine orders + markers for rendering (only manual markers placed below specific rows)
+    const renderItems = useMemo(() => {
+      const items = [];
+      const afterMap = new Map();
+      for (const m of (markers || [])) {
+        if (m && m.afterOrderId) {
+          const arr = afterMap.get(m.afterOrderId) || [];
+          arr.push(m);
+          afterMap.set(m.afterOrderId, arr);
+        }
+      }
+      const list = orders || [];
+      for (let i = 0; i < list.length; i++) {
+        const cur = list[i];
+        items.push({ kind: 'order', order: cur });
+        const aList = afterMap.get(cur._id) || [];
+        for (const m of aList) items.push({ kind: 'marker', marker: m });
+      }
+      return items;
+    }, [orders, markers]);
 
     // Fetch only Wahab orders
     const fetchWahabOrders = useCallback(async (opts = {}) => {
@@ -548,42 +592,6 @@ function WahabOrderTable() {
       } catch (err) { alert('Failed to delete some orders for this week.'); }
     };
 
-    const downloadOrderPdf = (order) => {
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'A4' });
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(14);
-      doc.text(`Wahab Order — ${order.serialNumber || order._id}`, 40, 40);
-      doc.setFontSize(10);
-      doc.text(`Date: ${new Date(order.orderDate || order.createdAt).toLocaleDateString()}`, 40, 58);
-      const row = [
-        '1',
-        order.serialNumber || '-',
-        new Date(order.orderDate || order.createdAt).toLocaleDateString(),
-        order.owner || '-',
-        order.deliveryStatus || '-',
-      ];
-      autoTable(doc, {
-        startY: 76,
-        head: [['#', 'Serial', 'Date', 'Owner', 'Status']],
-        body: [row],
-        styles: { fontSize: 9, cellPadding: 6 },
-        headStyles: { fillColor: [37, 99, 235] },
-        columnStyles: { 0: { cellWidth: 30 }, 1: { cellWidth: 140 }, 2: { cellWidth: 90 }, 3: { cellWidth: 140 }, 4: { cellWidth: 'auto' } },
-        didParseCell: (data) => {
-          if (data.section === 'body') {
-            const status = data.row?.raw?.[4];
-            const { bg, fg } = statusColor(status);
-            if (data.column.index === 4) {
-              data.cell.styles.fillColor = bg;
-              data.cell.styles.textColor = fg;
-              data.cell.styles.fontStyle = 'bold';
-            }
-          }
-        },
-      });
-      const safe = String(order.serialNumber || order._id).replace(/[^a-z0-9-_]+/ig, '_');
-      safeSavePDF(doc, `wahab-order-${safe}.pdf`);
-    };
 
     // Animated popup will cover UI when loading; no inline text
     if (error) return <p style={{color:'red', textAlign:'center'}}>{error}</p>;
@@ -741,64 +749,92 @@ function WahabOrderTable() {
                       </tr>
                     </thead>
                     <tbody>
-                      {orders.map(order => (
-                        <tr key={order._id}>
-                          <td data-label="Select"><input type="checkbox" checked={selectedIds.has(order._id)} onChange={()=>toggleSelect(order._id)} /></td>
-                          <td data-label="Serial No.">{order.serialNumber}</td>
-                          <td data-label="Date">{new Date(order.orderDate || order.createdAt).toLocaleDateString()}</td>
-                          <td data-label="Owner">
-                            <span style={{ 
-                              fontWeight: 'bold', 
-                              color: '#2563eb',
-                              backgroundColor: '#eff6ff',
-                              padding: '4px 8px',
-                              borderRadius: '4px'
-                            }}>
-                              {order.owner}
-                            </span>
-                          </td>
-                          <td data-label="Status">
-                            {editingStatusId === order._id ? (
-                              <select
-                                value={order.deliveryStatus}
-                                onChange={(e) => handleStatusChange(order._id, e.target.value)}
-                                onBlur={() => setEditingStatusId(null)}
-                                autoFocus
-                                style={{
-                                  padding: '4px 8px',
-                                  border: '2px solid #2563eb',
-                                  borderRadius: '6px',
-                                  fontSize: '12px',
-                                  background: 'white',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                {statusOptions.map(status => (
-                                  <option key={status} value={status}>{status}</option>
-                                ))}
-                              </select>
-                            ) : (
-                              <span 
-                                className={statusClass(order.deliveryStatus)}
-                                onClick={() => toggleStatusEdit(order._id)}
-                                style={{ 
-                                  cursor: 'pointer',
-                                  transition: 'all 0.2s',
-                                  position: 'relative'
-                                }}
-                                title="Click to change status"
-                              >
-                                {order.deliveryStatus}
+                      {renderItems.map((item, idx) => {
+                        if (item.kind === 'marker') {
+                          const m = item.marker;
+                          return (
+                            <tr key={`marker-${m._id}`} className="settlement-row">
+                              <td colSpan={6} style={{ background:'#f8fafc', borderTop:'2px solid #cbd5e1', borderBottom:'2px solid #cbd5e1', color:'#334155', fontWeight:600 }}>
+                                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                                    <span style={{ color:'#64748b' }}>━━━━━━━━━━</span>
+                                    <span>SETTLEMENT MARKER</span>
+                                    <span style={{ fontSize:12, color:'#6b7280' }}>{new Date(m.createdAt).toLocaleString()}</span>
+                                  </div>
+                                  <div>
+                                    <button className="btn btn-delete" onClick={()=>deleteMarker(m._id)} title="Delete marker">Delete</button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        }
+                        const order = item.order;
+                        // Determine if this row is above the first marker (to optionally style)
+                        const firstMarkerIdx = renderItems.findIndex(it => it.kind==='marker');
+                        const isAboveFirstMarker = firstMarkerIdx !== -1 && idx < firstMarkerIdx;
+                        return (
+                          <tr key={order._id} style={isAboveFirstMarker ? { background:'#fff' } : { opacity: 0.92 }}>
+                            <td data-label="Select"><input type="checkbox" checked={selectedIds.has(order._id)} onChange={()=>toggleSelect(order._id)} /></td>
+                            <td data-label="Serial No.">{order.serialNumber}</td>
+                            <td data-label="Date">{new Date(order.orderDate || order.createdAt).toLocaleDateString()}</td>
+                            <td data-label="Owner">
+                              <span style={{ 
+                                fontWeight: 'bold', 
+                                color: '#2563eb',
+                                backgroundColor: '#eff6ff',
+                                padding: '4px 8px',
+                                borderRadius: '4px'
+                              }}>
+                                {order.owner}
                               </span>
-                            )}
-                          </td>
-                          <td data-label="Actions" className="actions-cell">
-                            <button className="btn" onClick={()=>downloadOrderPdf(order)}>PDF</button>
-                            <button className="btn btn-edit" onClick={()=>openPwd('edit', order)}>Edit</button>
-                            <button className="btn btn-delete" onClick={()=>openPwd('delete', order)}>Delete</button>
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                            <td data-label="Status">
+                              {editingStatusId === order._id ? (
+                                <select
+                                  value={order.deliveryStatus}
+                                  onChange={(e) => handleStatusChange(order._id, e.target.value)}
+                                  onBlur={() => setEditingStatusId(null)}
+                                  autoFocus
+                                  style={{
+                                    padding: '4px 8px',
+                                    border: '2px solid #2563eb',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    background: 'white',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  {statusOptions.map(status => (
+                                    <option key={status} value={status}>{status}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span 
+                                  className={statusClass(order.deliveryStatus)}
+                                  onClick={() => toggleStatusEdit(order._id)}
+                                  style={{ 
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    position: 'relative'
+                                  }}
+                                  title="Click to change status"
+                                >
+                                  {order.deliveryStatus}
+                                </span>
+                              )}
+                            </td>
+                            <td data-label="Actions" className="actions-cell">
+                              <button className="btn btn-mark" onClick={()=>addMarkerAfterOrder(order)} title="Insert settlement marker below this row">
+                                <span className="ico" aria-hidden>┃</span>
+                                <span className="txt">Mark</span>
+                              </button>
+                              <button className="btn btn-edit" onClick={()=>openPwd('edit', order)}>Edit</button>
+                              <button className="btn btn-delete" onClick={()=>openPwd('delete', order)}>Delete</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

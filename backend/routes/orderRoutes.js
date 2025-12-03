@@ -218,5 +218,48 @@ router.delete('/deleted', async (_req, res) => {
     }
 });
 
+// ==============================
+// Settlement Markers (backend)
+// ==============================
+const SettlementMarker = require('../db/models/SettlementMarker');
+
+// List markers (optionally by owner)
+router.get('/settlements', async (req, res) => {
+    try {
+        const { owner } = req.query;
+        const q = {};
+        if (owner && owner !== 'All') q.owner = owner;
+        const items = await SettlementMarker.find(q).sort({ createdAt: -1 }).lean();
+        res.json(items);
+    } catch (err) {
+        res.status(500).json({ message: err.message || 'Failed to list settlements' });
+    }
+});
+
+// Create marker
+router.post('/settlements', async (req, res) => {
+    try {
+        const { owner, afterOrderId, label } = req.body || {};
+        if (!owner || !afterOrderId) return res.status(400).json({ message: 'owner and afterOrderId are required' });
+        // ensure order exists
+        const exist = await Order.exists({ _id: afterOrderId });
+        if (!exist) return res.status(400).json({ message: 'afterOrderId not found' });
+        const doc = await SettlementMarker.create({ owner, afterOrderId, label: label || 'Settlement' });
+        res.status(201).json(doc);
+    } catch (err) {
+        res.status(400).json({ message: err.message || 'Failed to create settlement' });
+    }
+});
+
+// Delete marker
+router.delete('/settlements/:id', async (req, res) => {
+    try {
+        const r = await SettlementMarker.findByIdAndDelete(req.params.id);
+        if (!r) return res.status(404).json({ message: 'Marker not found' });
+        res.json({ deleted: true });
+    } catch (err) {
+        res.status(500).json({ message: err.message || 'Failed to delete marker' });
+    }
+});
 
 module.exports = router;
