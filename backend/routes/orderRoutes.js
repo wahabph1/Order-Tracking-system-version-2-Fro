@@ -51,7 +51,7 @@ router.get('/', async (req, res) => {
     }
 });
 
-// 2. CREATE: Naya Order Add Karo
+// 2. CREATE: Naya Order Add Karo (single)
 router.post('/', async (req, res) => {
     try {
         const { serialNumber, owner, orderDate } = req.body;
@@ -92,6 +92,116 @@ router.post('/', async (req, res) => {
         res.status(201).json(newOrder);
     } catch (err) {
         res.status(400).json({ message: err.message || 'Failed to add order' });
+    }
+});
+
+// 2b. BULK CREATE: Multiple orders ek sath add karne ke liye
+// Body: { orders: [ { serialNumber, owner, orderDate? }, ... ] }
+router.post('/bulk', async (req, res) => {
+    try {
+        const { orders } = req.body || {};
+        if (!Array.isArray(orders) || orders.length === 0) {
+            return res.status(400).json({ message: 'orders array is required and cannot be empty' });
+        }
+
+        const results = [];
+        let wahabIndexesPurged = false;
+
+        for (let i = 0; i < orders.length; i++) {
+            const raw = orders[i] || {};
+            const serialNumber = raw.serialNumber;
+            const owner = raw.owner;
+            const orderDate = raw.orderDate;
+
+            if (!serialNumber || !owner) {
+                results.push({ index: i, ok: false, error: 'serialNumber and owner are required' });
+                continue;
+            }
+
+            const payload = { serialNumber, owner };
+
+            try {
+                if (String(owner) !== 'Wahab') {
+                    const exists = await Order.exists({ serialNumber, owner: { $ne: 'Wahab' } });
+                    if (exists) {
+                        results.push({ index: i, ok: false, error: 'Duplicate serial not allowed for non-Wahab owners.' });
+                        continue;
+                    }
+                } else if (!wahabIndexesPurged) {
+                    // Wahab ke liye legacy unique index ko sirf ek baar clean karein
+                    await purgeLegacySerialUnique();
+                    wahabIndexesPurged = true;
+                }
+
+                if (orderDate) {
+                    const d = new Date(orderDate);
+                    if (!isNaN(d.getTime())) payload.orderDate = d;
+                }
+
+                let created;
+                try {
+                    created = await Order.create(payload);
+                } catch (e) {
+                    if (String(owner) === 'Wahab' && e && e.code === 11000) {
+                        await purgeLegacySerialUnique();
+                        wahabIndexesPurged = true;
+                        created = await Order.create(payload);
+                    } else {
+                        throw e;
+                    }
+                }
+
+                results.push({ index: i, ok: true, order: created });
+            } catch (e) {
+                results.push({ index: i, ok: false, error: e.message || 'Failed to add order' });
+            }
+        }
+
+        const createdCount = results.filter(r => r.ok).length;
+        return res.status(207).json({
+            message: `Bulk create finished. Created ${createdCount} of ${orders.length} orders`,
+            results,
+        });
+    } catch (err) {
+        res.status(500).json({ message: err.message || 'Bulk create failed' });
+    }
+});
+
+// Test-only: Direct tracking stub (no real external integration yet)
+// GET /api/orders/track/:serial
+// Returns a fake status based on the serial pattern so frontend flow can be tested.
+router.get('/track/:serial', async (req, res) => {
+    try {
+        const raw = String(req.params.serial || '').trim();
+        if (!raw) {
+            return res.status(400).json({ message: 'Serial is required' });
+        }
+
+        const serial = raw.toUpperCase();
+        let externalStatus = 'Pending';
+
+        // Very simple demo rules so you can see different outputs:
+        // - If contains 'C' => Cancelled
+        // - Else last digit 0-3 => Pending, 4-6 => In Transit, 7-9 => Delivered
+        if (serial.includes('C')) {
+            externalStatus = 'Cancelled';
+        } else {
+            const last = serial[serial.length - 1];
+            const n = parseInt(last, 10);
+            if (!Number.isNaN(n)) {
+                if (n <= 3) externalStatus = 'Pending';
+                else if (n <= 6) externalStatus = 'In Transit';
+                else externalStatus = 'Delivered';
+            }
+        }
+
+        return res.json({
+            serialNumber: raw,
+            externalStatus,
+            checkedAt: new Date().toISOString(),
+        });
+    } catch (err) {
+        res.status(500).json({ message: err.message || 'Tracking failed' });
     }
 });
 
