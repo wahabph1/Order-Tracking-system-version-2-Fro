@@ -70,6 +70,17 @@ function OrderTable() {
     const [exportFrom, setExportFrom] = useState(''); // YYYY-MM-DD
     const [exportTo, setExportTo] = useState(''); // YYYY-MM-DD
 
+    // Bulk add UI state (all owners)
+    const [bulkAddOpen, setBulkAddOpen] = useState(false);
+    const [bulkAddText, setBulkAddText] = useState('');
+    const [bulkAddLoading, setBulkAddLoading] = useState(false);
+    const [bulkAddResult, setBulkAddResult] = useState(null);
+    const [bulkAddOwner, setBulkAddOwner] = useState('Emirate Essentials');
+    const [bulkAddDate, setBulkAddDate] = useState(() => {
+        const today = new Date();
+        return today.toISOString().split('T')[0];
+    });
+
     const fetchOrders = useCallback(async (opts = {}) => {
         const { silent = false } = opts;
         if (!silent) setLoading(true); 
@@ -396,6 +407,63 @@ function OrderTable() {
         }
     };
 
+    // Parse bulk add serials: multiple serial numbers, one per line / space / comma
+    const parseBulkAddSerials = (text) => {
+        return Array.from(new Set(String(text || '')
+            .split(/[\n,\t\r\s]+/)
+            .map(s => s.trim())
+            .filter(Boolean)));
+    };
+
+    const submitBulkAdd = async () => {
+        try {
+            const serials = parseBulkAddSerials(bulkAddText);
+            if (!serials.length) {
+                alert('Please enter at least one serial number.');
+                return;
+            }
+            if (!bulkAddOwner) {
+                alert('Please select owner.');
+                return;
+            }
+            const ordersToSend = serials.map(sn => ({
+                serialNumber: sn,
+                owner: bulkAddOwner,
+                orderDate: bulkAddDate ? `${bulkAddDate}T00:00:00.000Z` : undefined,
+            }));
+            setBulkAddLoading(true);
+            setBulkAddResult(null);
+            const res = await axios.post(`${API_URL}/bulk`, { orders: ordersToSend });
+            const payload = res?.data || {};
+            setBulkAddResult(payload);
+            // Refresh list silently so UI updates
+            handleRefresh({ silent: true });
+        } catch (e) {
+            const msg = e?.response?.data?.message || e.message || 'Bulk add failed';
+            alert(msg);
+        } finally {
+            setBulkAddLoading(false);
+        }
+    };
+
+    const handleTrack = async (serial) => {
+        if (!serial) return;
+        try {
+            if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(String(serial));
+            }
+        } catch (e) {
+            // ignore clipboard errors
+        }
+        try {
+            if (typeof window !== 'undefined') {
+                window.open('https://expoexpress.ae/home/Tracking', '_blank', 'noopener,noreferrer');
+            }
+        } catch (e) {
+            // ignore window errors
+        }
+    };
+
     // Show animated popup instead of inline loading text
     if (error) return <p style={{color:'red', textAlign:'center'}}>{error}</p>;
 
@@ -508,7 +576,28 @@ function OrderTable() {
                       {orders.map(order => (
                         <tr key={order._id}>
                           <td data-label="Select"><input type="checkbox" checked={selectedIds.has(order._id)} onChange={()=>toggleSelect(order._id)} /></td>
-                          <td data-label="Serial No.">{order.serialNumber}</td>
+                          <td data-label="Serial No.">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
+                              <span>{order.serialNumber}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleTrack(order.serialNumber)}
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  borderRadius: '999px',
+                                  border: '1px solid #0f172a',
+                                  background: '#111827',
+                                  color: '#e5e7eb',
+                                  cursor: 'pointer',
+                                  whiteSpace: 'nowrap'
+                                }}
+                                title="Open ExpoExpress tracking and copy serial"
+                              >
+                                Track
+                              </button>
+                            </div>
+                          </td>
                           <td data-label="Date">{new Date(order.orderDate || order.createdAt).toLocaleDateString()}</td>
                           <td data-label="Owner">{order.owner}</td>
                           <td data-label="Status">
@@ -722,6 +811,10 @@ function OrderTable() {
                   <span>Export Pending — By Owner (All)</span>
                   <span className="arrow">→</span>
                 </button>
+                <button className="modal-action" onClick={()=>{ setActionsOpen(false); setBulkAddOpen(true); }}>
+                  <span>Bulk Add Orders (All Owners)</span>
+                  <span className="arrow">→</span>
+                </button>
                 <button className="modal-action delete-selected" disabled={selectedIds.size === 0} onClick={()=>{ setActionsOpen(false); openPwd('deleteSelected'); }}>
                   <span>🗑️ Delete Selected ({selectedIds.size})</span>
                   <span className="arrow">→</span>
@@ -738,6 +831,69 @@ function OrderTable() {
                   <span>🗑️ Delete All ({orders.length})</span>
                   <span className="arrow">→</span>
                 </button>
+              </div>
+            </Modal>
+
+            {/* Bulk Add Orders Modal */}
+            <Modal open={bulkAddOpen} title="Bulk Add Orders (All Owners)" onClose={()=>setBulkAddOpen(false)} size="md">
+              <div style={{ display:'grid', gap:12 }}>
+                <div style={{ display:'grid', gridTemplateColumns:'1.2fr 1fr', gap:8 }}>
+                  <div>
+                    <label style={{ display:'block', fontSize:12, color:'#64748b', marginBottom:4 }}>Owner</label>
+                    <select
+                      className="search"
+                      value={bulkAddOwner}
+                      onChange={(e)=>setBulkAddOwner(e.target.value)}
+                      style={{ width:'100%' }}
+                    >
+                      {['Emirate Essentials', 'Ahsan', 'Habibi Tools', 'Wahab'].map(o => (
+                        <option key={o} value={o}>{o}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display:'block', fontSize:12, color:'#64748b', marginBottom:4 }}>Date</label>
+                    <input
+                      type="date"
+                      className="search"
+                      value={bulkAddDate}
+                      onChange={(e)=>setBulkAddDate(e.target.value)}
+                      style={{ width:'100%' }}
+                    />
+                  </div>
+                </div>
+                <div style={{ fontSize:12, color:'#475569' }}>
+                  Neeche sirf <strong>multiple Serial Numbers</strong> likho. Jo owner upar select hoga,
+                  sab orders usi owner ke name se save honge, aur upar wali date se banenge.
+                  Aap serials ko line by line, ya comma/space se alag likh sakte ho.
+                  <br />Example:<br />
+                  <code>ABC123</code><br />
+                  <code>XYZ999</code><br />
+                  <code>P-00034</code>
+                </div>
+                <textarea
+                  rows={8}
+                  value={bulkAddText}
+                  onChange={(e)=>setBulkAddText(e.target.value)}
+                  placeholder={"ABC123\nXYZ999\nP-00034"}
+                  style={{ width:'100%', padding:'10px 12px', border:'2px solid #e5e7eb', borderRadius:8, fontFamily:'monospace', fontSize:12 }}
+                />
+                {bulkAddResult && (
+                  <div style={{ fontSize:12, color:'#065f46', background:'#ecfdf3', borderRadius:8, padding:'8px 10px' }}>
+                    {bulkAddResult.message || ''}<br />
+                    {Array.isArray(bulkAddResult.results) && (
+                      <>
+                        Success: {bulkAddResult.results.filter(r=>r.ok).length} • Failed: {bulkAddResult.results.filter(r=>!r.ok).length}
+                      </>
+                    )}
+                  </div>
+                )}
+                <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
+                  <button className="btn" onClick={()=>setBulkAddOpen(false)} style={{ background:'#e5e7eb', border:'1px solid #d1d5db' }}>Close</button>
+                  <button className="btn" disabled={bulkAddLoading} onClick={submitBulkAdd} style={{ background:'#2563eb', color:'#fff', border:'1px solid #1e40af' }}>
+                    {bulkAddLoading ? 'Saving…' : 'Save Orders'}
+                  </button>
+                </div>
               </div>
             </Modal>
 

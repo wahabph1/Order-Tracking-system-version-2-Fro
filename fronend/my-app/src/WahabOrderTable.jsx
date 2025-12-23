@@ -41,6 +41,7 @@ function WahabOrderTable() {
     const allSelected = orders.length > 0 && selectedIds.size === orders.length;
     const deliveredCount = (orders || []).filter(o => String(o.deliveryStatus).toLowerCase() === 'delivered').length;
     const cancelledCount = (orders || []).filter(o => String(o.deliveryStatus).toLowerCase() === 'cancelled').length;
+    const [trackingLoadingId, setTrackingLoadingId] = useState(null);
     const toggleSelect = (id) => setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
     const toggleSelectAll = () => {
       if (allSelected) setSelectedIds(new Set()); else setSelectedIds(new Set(orders.map(o => o._id)));
@@ -80,6 +81,16 @@ function WahabOrderTable() {
     const [bulkStatus, setBulkStatus] = useState('Pending');
     const [bulkLoading, setBulkLoading] = useState(false);
     const [bulkResult, setBulkResult] = useState(null);
+
+    // Bulk add (Wahab only)
+    const [bulkAddOpen, setBulkAddOpen] = useState(false);
+    const [bulkAddText, setBulkAddText] = useState('');
+    const [bulkAddDate, setBulkAddDate] = useState(() => {
+      const today = new Date();
+      return today.toISOString().split('T')[0];
+    });
+    const [bulkAddLoading, setBulkAddLoading] = useState(false);
+    const [bulkAddResult, setBulkAddResult] = useState(null);
 
     // Weekly Manager (Friday-start weeks)
     const [weeklyMgrOpen, setWeeklyMgrOpen] = useState(false);
@@ -272,6 +283,46 @@ function WahabOrderTable() {
 
     const statusClass = (s) => `status status--${String(s || '').toLowerCase().replace(/\\s+/g,'-')}`;
 
+    const handleTrack = async (serial) => {
+      if (!serial) return;
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(String(serial));
+        }
+      } catch (e) {
+        // ignore clipboard errors
+      }
+      try {
+        if (typeof window !== 'undefined') {
+          window.open('https://expoexpress.ae/home/Tracking', '_blank', 'noopener,noreferrer');
+        }
+      } catch (e) {
+        // ignore window errors
+      }
+    };
+
+    const handleDirectTrack = async (order) => {
+      if (!order || !order.serialNumber) return;
+      try {
+        setTrackingLoadingId(order._id);
+        const res = await axios.get(`${API_URL}/track/${encodeURIComponent(order.serialNumber)}`);
+        const externalStatus = res?.data?.externalStatus;
+        if (externalStatus) {
+          // Local row update so you can see the effect immediately
+          setOrders(prev => prev.map(o => (
+            o._id === order._id ? { ...o, deliveryStatus: externalStatus } : o
+          )));
+          alert(`Tracking (demo) for ${order.serialNumber}: ${externalStatus}`);
+        } else {
+          alert(`No tracking result (demo) for ${order.serialNumber}`);
+        }
+      } catch (e) {
+        alert('Direct tracking (demo) failed.');
+      } finally {
+        setTrackingLoadingId(null);
+      }
+    };
+
     // PDF status colors (match dashboard feel)
     const statusColor = (s) => {
       const key = String(s || '').toLowerCase();
@@ -334,6 +385,28 @@ function WahabOrderTable() {
         alert(e?.response?.data?.message || 'Bulk status update failed');
       } finally {
         setBulkLoading(false);
+      }
+    };
+
+    const submitBulkAddWahab = async () => {
+      try {
+        const serials = parseSerials(bulkAddText);
+        if (!serials.length) { alert('Enter at least one serial'); return; }
+        const ordersToSend = serials.map(sn => ({
+          serialNumber: sn,
+          owner: 'Wahab',
+          orderDate: bulkAddDate ? `${bulkAddDate}T00:00:00.000Z` : undefined,
+        }));
+        setBulkAddLoading(true);
+        setBulkAddResult(null);
+        const res = await axios.post(`${API_URL}/bulk`, { orders: ordersToSend });
+        setBulkAddResult(res?.data || null);
+        // Refresh Wahab list silently so UI update ho jaye
+        handleRefresh({ silent: true });
+      } catch (e) {
+        alert(e?.response?.data?.message || e.message || 'Bulk Wahab add failed');
+      } finally {
+        setBulkAddLoading(false);
       }
     };
 
@@ -776,7 +849,48 @@ function WahabOrderTable() {
                         return (
                           <tr key={order._id} style={isAboveFirstMarker ? { background:'#fff' } : { opacity: 0.92 }}>
                             <td data-label="Select"><input type="checkbox" checked={selectedIds.has(order._id)} onChange={()=>toggleSelect(order._id)} /></td>
-                            <td data-label="Serial No.">{order.serialNumber}</td>
+                            <td data-label="Serial No.">
+                              <div style={{ display:'flex', alignItems:'center', gap:8, justifyContent:'space-between' }}>
+                                <span>{order.serialNumber}</span>
+                                <div style={{ display:'flex', gap:4 }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTrack(order.serialNumber)}
+                                    style={{
+                                      padding: '4px 8px',
+                                      fontSize: '11px',
+                                      borderRadius: '999px',
+                                      border: '1px solid #0f172a',
+                                      background: '#111827',
+                                      color: '#e5e7eb',
+                                      cursor: 'pointer',
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                    title="Open ExpoExpress tracking and copy serial (website)"
+                                  >
+                                    Web
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDirectTrack(order)}
+                                    disabled={trackingLoadingId === order._id}
+                                    style={{
+                                      padding: '4px 8px',
+                                      fontSize: '11px',
+                                      borderRadius: '999px',
+                                      border: '1px solid #0f172a',
+                                      background: trackingLoadingId === order._id ? '#6b7280' : '#111827',
+                                      color: '#e5e7eb',
+                                      cursor: trackingLoadingId === order._id ? 'default' : 'pointer',
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                    title="Demo: Direct tracking inside system"
+                                  >
+                                    App
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
                             <td data-label="Date">{new Date(order.orderDate || order.createdAt).toLocaleDateString()}</td>
                             <td data-label="Owner">
                               <span style={{ 
@@ -967,6 +1081,10 @@ function WahabOrderTable() {
                   <span>Bulk Status Update</span>
                   <span className="arrow">→</span>
                 </button>
+                <button className="modal-action" onClick={()=>{ setActionsOpen(false); setBulkAddOpen(true); }}>
+                  <span>Bulk Add Wahab Orders</span>
+                  <span className="arrow">→</span>
+                </button>
                 <button className="modal-action delete-selected" disabled={selectedIds.size === 0} onClick={()=>{ setActionsOpen(false); openPwd('deleteSelected'); }}>
                   <span>🗑️ Delete Selected ({selectedIds.size})</span>
                   <span className="arrow">→</span>
@@ -991,6 +1109,53 @@ function WahabOrderTable() {
                   <span>🗑️ Delete All ({orders.length})</span>
                   <span className="arrow">→</span>
                 </button>
+              </div>
+            </Modal>
+
+            {/* Bulk Add Wahab Orders Modal */}
+            <Modal open={bulkAddOpen} title="Bulk Add Wahab Orders" onClose={()=>setBulkAddOpen(false)} size="md">
+              <div style={{ display:'grid', gap:12 }}>
+                <div>
+                  <label style={{ display:'block', fontSize:12, color:'#64748b', marginBottom:4 }}>Date</label>
+                  <input
+                    type="date"
+                    className="search"
+                    value={bulkAddDate}
+                    onChange={(e)=>setBulkAddDate(e.target.value)}
+                    style={{ width:'100%' }}
+                  />
+                </div>
+                <div style={{ fontSize:12, color:'#475569' }}>
+                  Neeche sirf <strong>multiple Serial Numbers</strong> likho. Owner fixed hamesha <strong>Wahab</strong> rahega,
+                  aur upar wali date se sab orders banenge. Line by line, comma ya space se serials likh sakte ho.
+                  <br />Example:<br />
+                  <code>W-001</code><br />
+                  <code>W-002</code><br />
+                  <code>W-003</code>
+                </div>
+                <textarea
+                  rows={8}
+                  value={bulkAddText}
+                  onChange={(e)=>setBulkAddText(e.target.value)}
+                  placeholder={"W-001\nW-002\nW-003"}
+                  style={{ width:'100%', padding:'10px 12px', border:'2px solid #e5e7eb', borderRadius:8, fontFamily:'monospace', fontSize:12 }}
+                />
+                {bulkAddResult && (
+                  <div style={{ fontSize:12, color:'#065f46', background:'#ecfdf3', borderRadius:8, padding:'8px 10px' }}>
+                    {bulkAddResult.message || ''}<br />
+                    {Array.isArray(bulkAddResult.results) && (
+                      <>
+                        Success: {bulkAddResult.results.filter(r=>r.ok).length} • Failed: {bulkAddResult.results.filter(r=>!r.ok).length}
+                      </>
+                    )}
+                  </div>
+                )}
+                <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
+                  <button className="btn" onClick={()=>setBulkAddOpen(false)} style={{ background:'#e5e7eb', border:'1px solid #d1d5db' }}>Close</button>
+                  <button className="btn" disabled={bulkAddLoading} onClick={submitBulkAddWahab} style={{ background:'#2563eb', color:'#fff', border:'1px solid #1e40af' }}>
+                    {bulkAddLoading ? 'Saving…' : 'Save Wahab Orders'}
+                  </button>
+                </div>
               </div>
             </Modal>
 

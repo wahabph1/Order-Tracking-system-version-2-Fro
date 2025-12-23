@@ -16,6 +16,9 @@ import AutoDetect from '../src/AutoDetect';
 import QatarDetails from './QatarDetails';
 
 function App() {
+    // Theme state (navbar se control hoga)
+    const [theme, setTheme] = useState('default');
+
     // Splash screen state
     const [showSplash, setShowSplash] = useState(true);
     
@@ -37,6 +40,32 @@ function App() {
         transTimer.current = setTimeout(() => setTransitioning(false), 600);
     };
     
+    // Theme ko localStorage se load karo
+    useEffect(() => {
+        try {
+            const stored = window.localStorage.getItem('order_theme');
+            if (stored) setTheme(stored);
+        } catch {
+            // ignore
+        }
+    }, []);
+
+    // Theme change hone par body class update karo
+    useEffect(() => {
+        const cls = `theme-${theme}`;
+        const body = document.body;
+        // purani theme-* classes hatao
+        body.classList.forEach(c => {
+            if (c.startsWith('theme-')) body.classList.remove(c);
+        });
+        body.classList.add(cls);
+        try {
+            window.localStorage.setItem('order_theme', theme);
+        } catch {
+            // ignore
+        }
+    }, [theme]);
+
     // No persistent authentication - always require login after refresh
     // Reset to dashboard if trying to access protected views without authentication
     useEffect(() => {
@@ -95,8 +124,13 @@ function App() {
     return (
         <div className="App">
             
-            {/* 1. Navigation Bar: setCurrentView function pass kiya */}
-            <Navbar onNavClick={handleNavClick} currentView={currentView} />
+            {/* 1. Navigation Bar: setCurrentView function pass kiya + theme control */}
+            <Navbar 
+                onNavClick={handleNavClick} 
+                currentView={currentView}
+                theme={theme}
+                onThemeChange={setTheme}
+            />
 
             {/* 2. Main Content */}
             <main className={currentView === 'dashboard' ? 'is-dashboard' : ''}>

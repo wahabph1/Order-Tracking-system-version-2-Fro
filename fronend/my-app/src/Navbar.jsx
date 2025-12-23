@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 // Professional, responsive navbar with improved layout and visuals
-function Navbar({ onNavClick, currentView }) {
+function Navbar({ onNavClick, currentView, theme = 'default', onThemeChange }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const projectName = 'TrackMate UAE';
 
@@ -115,6 +115,19 @@ function Navbar({ onNavClick, currentView }) {
             <span className="nav-shine" aria-hidden></span>
             Profile
           </button>
+
+          {/* Theme selector */}
+          <div className="theme-switch-wrap" aria-label="Theme selector">
+            <select
+              className="theme-select"
+              value={theme}
+              onChange={(e) => onThemeChange && onThemeChange(e.target.value)}
+            >
+              <option value="default">Default</option>
+              <option value="dark">Dark</option>
+              <option value="emerald">Emerald</option>
+            </select>
+          </div>
         </nav>
       </div>
     </header>
